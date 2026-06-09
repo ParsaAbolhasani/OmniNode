@@ -1,22 +1,20 @@
 {
-  "name": "eth-rpc-client",
+  "name": "p2p-node",
   "version": "1.0.0",
-  "description": "Production-ready Ethereum RPC client - Full Node communication layer",
-  "main": "dist/index.js",
+  "description": "A simple P2P node using libp2p - Step 3 to becoming a Full Node",
+  "main": "src/index.js",
+  "type": "module",
   "scripts": {
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
-    "build": "tsc",
-    "test": "jest"
+    "start": "node src/index.js"
   },
   "dependencies": {
-    "axios": "^1.6.0",
-    "dotenv": "^16.3.0",
-    "ethers": "^6.8.0"
-  },
-  "devDependencies": {
-    "@types/node": "^20.8.0",
-    "ts-node": "^10.9.0",
-    "typescript": "^5.2.0"
+    "@libp2p/interface": "^2.0.0",
+    "libp2p": "^2.0.0",
+    "@libp2p/tcp": "^10.0.0",
+    "@libp2p/plaintext": "^2.0.0",
+    "@libp2p/ping": "^2.0.0",
+    "@chainsafe/libp2p-noise": "^15.0.0",
+    "@libp2p/mplex": "^11.0.0",
+    "multiaddr": "^10.0.0"
   }
 }
