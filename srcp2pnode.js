@@ -6,104 +6,115 @@ import { ping } from '@libp2p/ping';
 import { pipe } from 'it-pipe';
 import { fromString, toString } from 'uint8arrays';
 
-const PROTOCOL = '/fullnode/1.0.0';
+const PROTOCOL = '/fullnode/2.0.0';
 
 export class P2PNode {
-    constructor(port = 9000, onTransaction, onNewPeer) {
+    constructor(port = 9000, handlers) {
         this.port = port;
+        this.handlers = handlers; // { onTransaction, onBlock, onSyncRequest, onSyncResponse }
         this.node = null;
         this.peers = new Map();
-        this.onTransaction = onTransaction;
-        this.onNewPeer = onNewPeer;
     }
 
     async start() {
         this.node = await createLibp2p({
-            addresses: {
-                listen: [`/ip4/0.0.0.0/tcp/${this.port}`]
-            },
+            addresses: { listen: [`/ip4/0.0.0.0/tcp/${this.port}`] },
             transports: [tcp()],
             connectionEncryptors: [noise()],
             streamMuxers: [mplex()],
-            services: {
-                ping: ping()
-            }
+            services: { ping: ping() }
         });
 
         await this.node.start();
 
-        // Handle incoming streams
         await this.node.handle(PROTOCOL, async ({ stream }) => {
-            pipe(
-                stream,
-                async function (source) {
-                    for await (const message of source) {
-                        const data = JSON.parse(toString(message.subarray()));
-                        
-                        if (data.type === 'TRANSACTION') {
-                            const tx = data.payload;
-                            if (this.onTransaction) {
-                                this.onTransaction(tx, stream);
+            pipe(stream, async (source) => {
+                for await (const message of source) {
+                    const data = JSON.parse(toString(message.subarray()));
+                    
+                    switch (data.type) {
+                        case 'TRANSACTION':
+                            if (this.handlers.onTransaction) 
+                                await this.handlers.onTransaction(data.payload);
+                            break;
+                        case 'BLOCK':
+                            if (this.handlers.onBlock)
+                                await this.handlers.onBlock(data.payload);
+                            break;
+                        case 'GET_BLOCKS':
+                            if (this.handlers.onGetBlocks) {
+                                const blocks = await this.handlers.onGetBlocks();
+                                await this.sendMessage(stream, { type: 'BLOCKS', payload: blocks });
                             }
-                        }
-                        
-                        if (data.type === 'GET_BLOCKS') {
-                            // Send blocks back
-                            // Implementation simplified
-                        }
+                            break;
+                        case 'BLOCKS':
+                            if (this.handlers.onBlocks)
+                                await this.handlers.onBlocks(data.payload);
+                            break;
                     }
-                }.bind(this)
-            );
+                }
+            });
         });
 
         console.log(`🆔 P2P Node started on port ${this.port}`);
         console.log(`   Peer ID: ${this.node.peerId.toString()}`);
         
+        // بازیابی همسایه‌های قبلی از دیتابیس
+        if (this.handlers.onGetSavedPeers) {
+            const savedPeers = await this.handlers.onGetSavedPeers();
+            for (const peer of savedPeers) {
+                await this.connectToPeer(peer.multiaddr);
+            }
+        }
+        
         return this.node;
+    }
+
+    async sendMessage(stream, message) {
+        await pipe([fromString(JSON.stringify(message))], stream);
     }
 
     async connectToPeer(multiaddr) {
         try {
             await this.node.dial(multiaddr);
+            this.peers.set(multiaddr, multiaddr);
+            if (this.handlers.onNewPeer) this.handlers.onNewPeer(multiaddr);
             console.log(`✅ Connected to peer: ${multiaddr}`);
-            if (this.onNewPeer) this.onNewPeer(multiaddr);
             return true;
         } catch (error) {
-            console.error(`❌ Failed to connect to ${multiaddr}:`, error.message);
+            console.error(`❌ Failed to connect: ${error.message}`);
             return false;
         }
     }
 
     async broadcastTransaction(transaction) {
-        const message = {
-            type: 'TRANSACTION',
-            payload: transaction.toJSON()
-        };
-
-        const promises = [];
-        for (const peer of this.peers.values()) {
-            try {
-                const stream = await this.node.dialProtocol(peer, PROTOCOL);
-                promises.push(
-                    pipe(
-                        [fromString(JSON.stringify(message))],
-                        stream
-                    )
-                );
-            } catch (error) {
-                console.error(`Failed to broadcast to peer: ${error.message}`);
-            }
-        }
-        
-        await Promise.all(promises);
-        console.log(`📡 Broadcasted transaction ${transaction.hash.substring(0, 10)}... to ${this.peers.size} peers`);
+        const message = { type: 'TRANSACTION', payload: transaction.toJSON() };
+        await this.broadcast(message);
+        console.log(`📡 Broadcasted transaction ${transaction.hash.substring(0, 10)}...`);
     }
 
-    addPeer(peerId, multiaddr) {
-        if (!this.peers.has(peerId)) {
-            this.peers.set(peerId, multiaddr);
-            console.log(`🌟 New peer connected: ${peerId.substring(0, 10)}...`);
+    async broadcastBlock(block) {
+        const message = { type: 'BLOCK', payload: block };
+        await this.broadcast(message);
+        console.log(`📡 Broadcasted block #${block.index}`);
+    }
+
+    async requestBlockSync() {
+        const message = { type: 'GET_BLOCKS', payload: {} };
+        await this.broadcast(message);
+    }
+
+    async broadcast(message) {
+        const promises = [];
+        for (const [multiaddr] of this.peers) {
+            try {
+                const stream = await this.node.dialProtocol(multiaddr, PROTOCOL);
+                promises.push(this.sendMessage(stream, message));
+            } catch (error) {
+                console.error(`Failed to broadcast to ${multiaddr}: ${error.message}`);
+            }
         }
+        await Promise.all(promises);
     }
 
     getPeerCount() {
