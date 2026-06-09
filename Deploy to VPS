@@ -1,0 +1,12 @@
+# Update system
+sudo apt update && sudo apt upgrade -y
+
+# Install Node.js 18
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# Clone and setup
+git clone https://github.com/ParsaAbolhasani/OmniNode.git
+cd OmniNode
+npm install --production
+npm start
